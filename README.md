@@ -26,6 +26,22 @@ the screen. All three are triggered by keyboard shortcuts.
 build installed, `./build.sh --install` will replace it for you and
 clear the old permission entries.)
 
+## Why MooOve?
+
+Because macOS hangs a lot of its window management off the `Fn` key —
+`Fn + Ctrl + arrow` to tile a window to a half or a corner, `Fn + C` for
+Mission Control, and the whole `Fn`-prefixed row of system commands —
+and **`Fn` simply doesn't exist on most external keyboards**. Plug in a
+mechanical, ergonomic, or plain PC keyboard and those commands become
+unreachable. What's left is Mission Control, drag-and-drop, and the
+trackpad.
+
+MooOve replaces all of that with a handful of `Fn`-free shortcuts you
+can reach with one hand: Spaces on `Shift+Ctrl`, displays on
+`Cmd+Shift+Ctrl`, halves of the screen on `Ctrl+Opt`. Same muscle
+memory on the built-in keyboard and on the external one — move any
+window anywhere, with a keyboard reflex instead of a mouse trip.
+
 ## What you can do
 
 ### Move windows between Spaces
