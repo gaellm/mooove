@@ -1,0 +1,16 @@
+title: MooOve
+description: Move macOS windows between Spaces, displays, and screen halves — from the keyboard.
+theme: jekyll-theme-cayman
+permalink: pretty
+
+# Set automatically by actions/configure-pages, but kept here so
+# `bundle exec jekyll serve` produces the same links locally.
+url: https://gaellm.github.io
+baseurl: /mooove
+
+github:
+  repository_url: https://github.com/gaellm/mooove
+
+exclude:
+  - Gemfile
+  - Gemfile.lock

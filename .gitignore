@@ -1,0 +1,5 @@
+.build/
+.DS_Store
+MooOve.app/
+SpaceMover.app/
+dist/

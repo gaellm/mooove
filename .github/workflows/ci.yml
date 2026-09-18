@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and verify
+    # Pinned, not macos-latest: MooOve targets macOS 26 (Package.swift
+    # declares .macOS(.v26)), so it needs the macOS 26 SDK. Pinning means
+    # a future runner-label change can't silently break the build.
+    runs-on: macos-26
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Build app
+        run: ./scripts/build-macos.sh
+
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+          ./scripts/create-dmg.sh
+
+      - name: Verify
+        run: ./scripts/verify-release.sh --expect-arch arm64
+
+      # Handy for grabbing a build off a PR without tagging a release.
+      # Retention is short because these are unsigned throwaway builds.
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MooOve-dmg-${{ github.sha }}
+          path: dist/*.dmg
+          retention-days: 7
+          if-no-files-found: error
