@@ -38,7 +38,7 @@ trackpad.
 
 MooOve replaces all of that with a handful of `Fn`-free shortcuts you
 can reach with one hand: Spaces on `Shift+Ctrl`, displays on
-`Cmd+Shift+Ctrl`, halves of the screen on `Ctrl+Opt`. Same muscle
+`Cmd+Shift+Ctrl`, halves and quarters of the screen on `Ctrl+Opt`. Same muscle
 memory on the built-in keyboard and on the external one — move any
 window anywhere, with a keyboard reflex instead of a mouse trip.
 
