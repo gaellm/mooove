@@ -1,6 +1,6 @@
 ---
 title: MooOve
-description: Move the window you're using to another Space, another display, or a half of the screen — without touching the trackpad.
+description: Move the window you're using to another Space, another display, or a half or quarter of the screen — without touching the trackpad.
 ---
 
 MooOve is a tiny macOS menu-bar app. It doesn't open windows, it doesn't
@@ -22,7 +22,7 @@ all from the keyboard:
 | `Shift + Ctrl + →` / `←` | Move the window to the next / previous Space |
 | `Shift + Ctrl + 1 … 9` | Move the window to Space 1 through 9 |
 | `Cmd + Shift + Ctrl + →` / `←` | Move the window to the next / previous display |
-| `Ctrl + Opt + ←` / `→` | Snap to the left / right half |
+| `Ctrl + Opt + ←` / `→` | Snap to the left / right half (press again for that side's quarters) |
 | `Ctrl + Opt + ↑` / `↓` | Snap to the top / bottom half (press again to maximize or restore) |
 | `Ctrl + Opt + Shift + arrow` | Snap this window to one side and the previously-focused window to the other |
 

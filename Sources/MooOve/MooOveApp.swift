@@ -13,7 +13,8 @@ private let log = Logger(subsystem: "com.gael.MooOve", category: "app")
 
 // MooOve
 // Menu-bar utility that moves the focused window between macOS Spaces
-// and snaps / swap-snaps it to halves of the screen from the keyboard.
+// and snaps / swap-snaps it to halves and quarters of the screen
+// from the keyboard.
 // macOS 13+ (menu-bar UI, ServiceManagement login item),
 // tested target: macOS 26.4+ for the SkyLight move operation.
 //
@@ -269,10 +270,11 @@ final class MooOveApp: NSObject, NSApplicationDelegate {
         tilingEnabledItem.target = self
         tilingEnabledItem.state = Prefs.tilingEnabled ? .on : .off
         tilingEnabledItem.toolTip =
-            "⌃⌥←  Left half\n"
-            + "⌃⌥→  Right half\n"
+            "⌃⌥←  Left half (press again for the top-left quarter,\n"
+            + "        again for the bottom-left, again to restore)\n"
+            + "⌃⌥→  Right half (same cycle on the right side)\n"
             + "⌃⌥↑  Top half (press again to maximize; then restore)\n"
-            + "⌃⌥↓  Bottom half (press again to minimize-restore)\n"
+            + "⌃⌥↓  Bottom half (press again to restore)\n"
             + "\n"
             + "Add ⇧ (⌃⌥⇧+arrow) to also tile the previously-focused\n"
             + "window to the opposite side of the screen."
@@ -483,8 +485,9 @@ final class MooOveApp: NSObject, NSApplicationDelegate {
                 + "  ⇧⌃1…9  Space N\n"
                 + "  ⌘⇧⌃←  Move window to previous display\n"
                 + "  ⌘⇧⌃→  Move window to next display\n"
-                + "  ⌃⌥←  Snap window: left half\n"
-                + "  ⌃⌥→  Snap window: right half\n"
+                + "  ⌃⌥←  Snap window: left half (again = top-left quarter; "
+                + "again = bottom-left; again = restore)\n"
+                + "  ⌃⌥→  Snap window: right half (same cycle on the right)\n"
                 + "  ⌃⌥↑  Snap window: top half (again = maximize; again = restore)\n"
                 + "  ⌃⌥↓  Snap window: bottom half (again = restore)\n"
                 + "  ⌃⌥⇧+arrow  Tile current + previously-focused window to opposite halves\n\n"
@@ -582,7 +585,7 @@ final class MooOveApp: NSObject, NSApplicationDelegate {
         // tracker on activation) and `entries[1]` is the previous one.
         let previous = entries.dropFirst().first
 
-        let frontOK = tiler.tile(region: region)
+        let frontOK = tiler.tile(region: region, allowCycle: false)
 
         if let prev = previous {
             // Verify the previous entry is still a live, tileable window
@@ -1246,9 +1249,16 @@ final class FocusTracker {
 
 // MARK: - Window tiler
 //
-// Snaps the focused window to a half of the screen it currently lives on
-// (or the screen where the window's center sits). The Up / Down keys
-// cycle:
+// Snaps the focused window to a half or a quarter of the screen it
+// currently lives on (or the screen where the window's center sits).
+// Every arrow cycles on repeated presses:
+//
+//   ⌃⌥← from any state                -> left half
+//   ⌃⌥← when already left half        -> top-left quarter
+//   ⌃⌥← when already top-left         -> bottom-left quarter
+//   ⌃⌥← when already bottom-left      -> restore previous frame
+//
+//   ⌃⌥→ mirrors that on the right side.
 //
 //   ⌃⌥↑ from any state           -> top half
 //   ⌃⌥↑ when already top half    -> maximize (full visible frame)
@@ -1257,8 +1267,8 @@ final class FocusTracker {
 //   ⌃⌥↓ from any state           -> bottom half
 //   ⌃⌥↓ when already bottom half -> restore previous frame
 //
-// Left / Right are straightforward halves. On press we remember the
-// pre-tiling frame so we can restore it later.
+// On the first press we remember the pre-tiling frame so we can restore
+// it later.
 //
 // Coordinates: the Accessibility API uses a top-left origin in points
 // (unlike NSScreen, which uses a bottom-left origin). We work in the AX
@@ -1290,6 +1300,10 @@ final class WindowTiler {
         case rightHalf
         case topHalf
         case bottomHalf
+        case topLeftQuarter
+        case bottomLeftQuarter
+        case topRightQuarter
+        case bottomRightQuarter
         case maximized
     }
 
@@ -1298,13 +1312,33 @@ final class WindowTiler {
         /// Frame before we started tiling this window, in AX coordinates.
         /// Used to restore the window on the "cycle back" press.
         var originalFrame: CGRect?
+        /// The frame we asked for on the last tile, and the one the
+        /// window reported afterwards. They differ when an app clamps
+        /// us (minimum sizes, terminal character grids) or animates the
+        /// resize, so a window counts as untouched if it matches
+        /// either. Used to notice the user moving it by hand.
+        var requestedFrame: CGRect? = nil
+        var appliedFrame: CGRect? = nil
+
+        /// True when the window still sits where our last tile left it.
+        func stillTiled(at frame: CGRect, tolerance: CGFloat = 4) -> Bool {
+            let known = [requestedFrame, appliedFrame].compactMap { $0 }
+            guard !known.isEmpty else { return true }
+            return known.contains { candidate in
+                abs(frame.minX - candidate.minX) <= tolerance
+                    && abs(frame.minY - candidate.minY) <= tolerance
+                    && abs(frame.width - candidate.width) <= tolerance
+                    && abs(frame.height - candidate.height) <= tolerance
+            }
+        }
     }
 
     private var memos: [UInt32: WindowMemo] = [:]
 
     /// Snap the focused window to the requested region. Returns true if
-    /// anything was actually applied.
-    func tile(region: Region) -> Bool {
+    /// anything was actually applied. Pass `allowCycle: false` to snap
+    /// straight to the half and skip the repeated-press cycle.
+    func tile(region: Region, allowCycle: Bool = true) -> Bool {
         guard AXIsProcessTrusted() else {
             log.notice("WindowTiler: not trusted for AX")
             return false
@@ -1329,13 +1363,13 @@ final class WindowTiler {
         var wid: UInt32 = 0
         _ = _AXUIElementGetWindow(window, &wid)
 
-        return tile(window: window, wid: wid, region: region, allowCycle: true)
+        return tile(window: window, wid: wid, region: region, allowCycle: allowCycle)
     }
 
     /// Snap a specific window (already resolved) to `region`. When
-    /// `allowCycle` is false the Up/Down keys don't run the
-    /// maximize/restore cycle — they just snap to top/bottom half. Used
-    /// by the swap shortcut, where cycling would be surprising.
+    /// `allowCycle` is false no arrow runs its repeated-press cycle —
+    /// each one just snaps to the corresponding half. Used by the swap
+    /// shortcut, where cycling would be surprising.
     @discardableResult
     func tile(
         window: AXUIElement,
@@ -1359,7 +1393,28 @@ final class WindowTiler {
         let visible = axRect(fromScreenVisibleFrameOf: screen)
 
         var memo = memos[wid] ?? WindowMemo(state: .none, originalFrame: nil)
+
+        // If the window is no longer where we last put it, the user has
+        // dragged or resized it by hand (or another tool has, or it
+        // moved to a different screen). The cycle we were tracking is
+        // stale: start over from the half, and treat where the window
+        // sits now as the layout to restore to.
+        if !memo.stillTiled(at: currentFrame) {
+            memo = WindowMemo(state: .none, originalFrame: nil)
+        }
+
         let prevState = memo.state
+
+        // Half / quarter geometry. The leading half is flush to the
+        // leading edge and the trailing half to the trailing edge, so
+        // the rounding in `floor` never leaves a one-point gap at the
+        // screen edge on an odd-sized display.
+        let halfW = floor(visible.width / 2)
+        let halfH = floor(visible.height / 2)
+        let leftX = visible.minX
+        let rightX = visible.minX + (visible.width - halfW)
+        let topY = visible.minY
+        let bottomY = visible.minY + (visible.height - halfH)
 
         // Determine the target frame + new state.
         let target: CGRect
@@ -1367,23 +1422,46 @@ final class WindowTiler {
 
         switch region {
         case .left:
-            target = CGRect(
-                x: visible.minX,
-                y: visible.minY,
-                width: floor(visible.width / 2),
-                height: visible.height
-            )
-            newState = .leftHalf
+            // Cycle (when allowed): left half -> top-left quarter ->
+            // bottom-left quarter -> restore.
+            if allowCycle, prevState == .leftHalf {
+                target = CGRect(x: leftX, y: topY, width: halfW, height: halfH)
+                newState = .topLeftQuarter
+            } else if allowCycle, prevState == .topLeftQuarter {
+                target = CGRect(x: leftX, y: bottomY, width: halfW, height: halfH)
+                newState = .bottomLeftQuarter
+            } else if allowCycle, prevState == .bottomLeftQuarter,
+                      let orig = memo.originalFrame {
+                target = orig
+                newState = .none
+            } else {
+                target = CGRect(
+                    x: leftX, y: visible.minY,
+                    width: halfW, height: visible.height
+                )
+                newState = .leftHalf
+            }
 
         case .right:
-            let halfW = floor(visible.width / 2)
-            target = CGRect(
-                x: visible.minX + (visible.width - halfW),
-                y: visible.minY,
-                width: halfW,
-                height: visible.height
-            )
-            newState = .rightHalf
+            // Cycle (when allowed): right half -> top-right quarter ->
+            // bottom-right quarter -> restore.
+            if allowCycle, prevState == .rightHalf {
+                target = CGRect(x: rightX, y: topY, width: halfW, height: halfH)
+                newState = .topRightQuarter
+            } else if allowCycle, prevState == .topRightQuarter {
+                target = CGRect(x: rightX, y: bottomY, width: halfW, height: halfH)
+                newState = .bottomRightQuarter
+            } else if allowCycle, prevState == .bottomRightQuarter,
+                      let orig = memo.originalFrame {
+                target = orig
+                newState = .none
+            } else {
+                target = CGRect(
+                    x: rightX, y: visible.minY,
+                    width: halfW, height: visible.height
+                )
+                newState = .rightHalf
+            }
 
         case .top:
             // Cycle (when allowed): top half -> maximized -> restore.
@@ -1395,8 +1473,8 @@ final class WindowTiler {
                 newState = .none
             } else {
                 target = CGRect(
-                    x: visible.minX, y: visible.minY,
-                    width: visible.width, height: floor(visible.height / 2)
+                    x: visible.minX, y: topY,
+                    width: visible.width, height: halfH
                 )
                 newState = .topHalf
             }
@@ -1407,12 +1485,9 @@ final class WindowTiler {
                 target = orig
                 newState = .none
             } else {
-                let halfH = floor(visible.height / 2)
                 target = CGRect(
-                    x: visible.minX,
-                    y: visible.minY + (visible.height - halfH),
-                    width: visible.width,
-                    height: halfH
+                    x: visible.minX, y: bottomY,
+                    width: visible.width, height: halfH
                 )
                 newState = .bottomHalf
             }
@@ -1425,9 +1500,15 @@ final class WindowTiler {
             memo.originalFrame = currentFrame
         }
         memo.state = newState
-        memos[wid] = memo
 
         applyFrame(window, target)
+
+        // Record both what we asked for and where the window says it
+        // landed, so the next press can tell "the app clamped our
+        // frame" apart from "the user dragged the window".
+        memo.requestedFrame = target
+        memo.appliedFrame = axFrame(window)
+        memos[wid] = memo
         log.notice("WindowTiler: region=\(String(describing: region), privacy: .public) state=\(String(describing: newState), privacy: .public) wid=\(wid)")
         return true
     }

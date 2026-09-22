@@ -13,14 +13,14 @@ cowsay 'MooOve !!!'
 # MooOve
 
 Move the window you're using to another macOS Space, to another
-display, or snap it to a half of the screen — all from the keyboard,
-without touching the trackpad.
+display, or snap it to a half or a quarter of the screen — all from the
+keyboard, without touching the trackpad.
 
 MooOve is a tiny menu-bar app. It doesn't open windows, it doesn't run
 in the Dock, it doesn't send data anywhere. It does three things: it
 moves the frontmost window between Spaces, it sends the frontmost
-window to another attached display, and it snaps windows to halves of
-the screen. All three are triggered by keyboard shortcuts.
+window to another attached display, and it snaps windows to halves and
+quarters of the screen. All three are triggered by keyboard shortcuts.
 
 (*"MooOve"* was previously named **SpaceMover**. If you have that older
 build installed, `./build.sh --install` will replace it for you and
@@ -74,14 +74,32 @@ shortcuts simply toggle between them; with three or more they cycle
 through in order and wrap around at the ends. On a single-display Mac
 the shortcut is a silent no-op (warning flash).
 
-### Snap windows to halves of the screen
+### Snap windows to halves and quarters of the screen
 
 | Shortcut                 | What it does                                                    |
 | ------------------------ | --------------------------------------------------------------- |
-| `Ctrl + Opt + ←`         | Snap the current window to the **left half** of its screen      |
-| `Ctrl + Opt + →`         | Snap the current window to the **right half** of its screen     |
+| `Ctrl + Opt + ←`         | Snap to the **left half**. Press again for the **top-left quarter**, again for the **bottom-left**, again to **restore** |
+| `Ctrl + Opt + →`         | Snap to the **right half**, with the same cycle on the right side |
 | `Ctrl + Opt + ↑`         | Snap to the **top half**. Press again to **maximize**, again to **restore** |
 | `Ctrl + Opt + ↓`         | Snap to the **bottom half**. Press again to **restore**         |
+
+Quarters don't get a shortcut of their own — you reach them by pressing
+the same arrow again:
+
+```
+Ctrl+Opt+←        Ctrl+Opt+←        Ctrl+Opt+←        Ctrl+Opt+←
+┌─────┬─────┐     ┌─────┬─────┐     ┌─────┬─────┐     ┌─────────┐
+│     │     │     │█████│     │     │     │     │     │  where  │
+│█████│     │  →  │█████│     │  →  ├─────┤     │  →  │ it was  │
+│█████│     │     ├─────┤     │     │█████│     │     │ before  │
+│     │     │     │     │     │     │█████│     │     │         │
+└─────┴─────┘     └─────┴─────┘     └─────┴─────┘     └─────────┘
+  left half      top-left quarter  bottom-left qtr.     restored
+```
+
+The cycle is tracked per window and resets as soon as you move or
+resize the window yourself, so the next `Ctrl + Opt + ←` always starts
+again from the left half.
 
 These are meant as an easier-to-reach alternative to the macOS built-in
 `Fn + Ctrl + arrow` shortcuts, which are awkward on non-Mac keyboards.
@@ -94,7 +112,8 @@ These are meant as an easier-to-reach alternative to the macOS built-in
 
 Perfect for pairing an editor with a terminal, a browser with a chat
 window, etc. MooOve tracks the most recently focused windows across
-every app.
+every app. This shortcut always uses halves and never cycles into
+quarters, so you can press it repeatedly without the pair coming apart.
 
 ## Menu bar
 
@@ -115,7 +134,8 @@ Click the small rectangle icon in the menu bar to see:
   The whole thing takes about a second and reuses the same Accessibility
   permission MooOve already needs. Turn it off if you'd rather have
   boundary presses do nothing.
-- **Enable Window Tiling Shortcuts (⌃⌥ arrows)** — on by default. Turn
+- **Enable Window Tiling Shortcuts (⌃⌥ arrows)** — on by default. Covers
+  both the halves and the quarters. Turn
   it off if you'd like `Ctrl+Opt+arrow` to be handled by another tool
   (e.g. Rectangle, Magnet, macOS built-in Window Tiling).
 - **Launch at Login** — MooOve starts automatically when you log in.

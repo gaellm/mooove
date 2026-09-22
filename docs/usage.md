@@ -34,14 +34,24 @@ clamped to fit if the destination is smaller. Two displays: the shortcuts
 toggle. Three or more: they cycle and wrap. One display: nothing happens,
 and the icon flashes a warning.
 
-## Snap windows to halves of the screen
+## Snap windows to halves and quarters of the screen
 
 | Shortcut | What it does |
 | --- | --- |
-| `Ctrl + Opt + ←` | Snap to the left half |
-| `Ctrl + Opt + →` | Snap to the right half |
+| `Ctrl + Opt + ←` | Snap to the left half — press again for the top-left quarter, again for the bottom-left, again to restore |
+| `Ctrl + Opt + →` | Snap to the right half — same cycle on the right side |
 | `Ctrl + Opt + ↑` | Snap to the top half — press again to maximize, again to restore |
 | `Ctrl + Opt + ↓` | Snap to the bottom half — press again to restore |
+
+Quarters have no shortcut of their own: you reach them by pressing the
+same left or right arrow again. So `Ctrl + Opt + ←` `Ctrl + Opt + ←`
+lands the window in the top-left quarter, and a third press drops it to
+the bottom-left. A fourth press puts the window back where it was
+before you started tiling it.
+
+The cycle is per window, and it resets whenever you move or resize the
+window yourself — the next `Ctrl + Opt + ←` starts again from the left
+half.
 
 These exist as an easier-to-reach alternative to the built-in
 `Fn + Ctrl + arrow`, which is awkward on non-Mac keyboards.
@@ -51,6 +61,9 @@ These exist as an easier-to-reach alternative to the built-in
 | Shortcut | What it does |
 | --- | --- |
 | `Ctrl + Opt + Shift + arrow` | Snap this window to that side, and the previously-focused window to the opposite side |
+
+This one always uses halves and never cycles into quarters, so you can
+press it repeatedly without the pair coming apart.
 
 Good for pairing an editor with a terminal, or a browser with a chat
 window. MooOve tracks the most recently focused windows across every app.

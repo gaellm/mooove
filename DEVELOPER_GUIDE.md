@@ -322,14 +322,35 @@ Given a `Region` (`.left`, `.right`, `.top`, `.bottom`) it:
    current position (Rectangle and Magnet use the same trick).
 
 A per-CGWindowID `WindowMemo` remembers the pre-tile frame and the last
-tile state, so the Up-key cycles top-half → maximized → restore and the
-Down-key cycles bottom-half → restore.
+tile state, which is what makes repeated presses cycle:
 
-The public `tile(region:)` targets the front window; a lower-level
-`tile(window:wid:region:allowCycle:)` targets a specific `AXUIElement`
-and is used by the swap-tile shortcut. `allowCycle: false` disables the
-Up/Down cycling because cycling *someone else's window* would be
-surprising.
+- Left  → left half → top-left quarter → bottom-left quarter → restore
+- Right → right half → top-right quarter → bottom-right quarter → restore
+- Up    → top half → maximized → restore
+- Down  → bottom half → restore
+
+Quarters deliberately have no shortcut of their own — they sit on the
+second and third press of the arrow that already snaps to that side.
+That makes the memo's accuracy matter more than it used to: before, a
+stale entry only affected Up/Down, and now a memo left over from an
+hour ago would send `⌃⌥←` to a quarter instead of the half the user
+expected. So `WindowMemo` also records the frame it requested and the
+frame the window reported back, and `stillTiled(at:)` resets the cycle
+when the window has since been moved or resized by hand. Both frames
+are kept because apps clamp our request (minimum sizes, terminal
+character grids) or report a mid-animation frame on the read right
+after the set — matching either one counts as untouched.
+The halves and quarters share one set of edge values (`leftX`/`rightX`,
+`topY`/`bottomY`, `halfW`/`halfH`), with the trailing half pinned to the
+trailing edge, so `floor` rounding can't leave a one-point gap on a
+display with an odd-numbered visible width or height.
+
+The public `tile(region:allowCycle:)` targets the front window; a
+lower-level `tile(window:wid:region:allowCycle:)` targets a specific
+`AXUIElement`. `allowCycle: false` snaps straight to the half and skips
+the cycle; the swap-tile shortcut passes it for *both* windows, so
+holding ⌃⌥⇧← doesn't walk the front window into a quarter and break the
+side-by-side pairing.
 
 ### `FocusTracker`
 
