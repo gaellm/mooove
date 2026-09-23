@@ -529,8 +529,9 @@ final class MooOveApp: NSObject, NSApplicationDelegate {
            direction == .next,
            Prefs.createSpaceIfMissing,
            mover.currentSpaceIsLast() {
-            log.notice("no next Space, attempting to create one via Mission Control")
-            MissionControlSpaceCreator.createNewSpace { [weak self] created in
+            let displayUUID = mover.focusedDisplayUUID()
+            log.notice("no next Space, attempting to create one via Mission Control on display \(displayUUID ?? "?", privacy: .public)")
+            MissionControlSpaceCreator.createNewSpace(onDisplay: displayUUID) { [weak self] created in
                 guard let self else { return }
                 if created {
                     let retry = self.mover.move(direction: .next,
@@ -821,20 +822,29 @@ private enum LaunchAtLogin {
 //
 //   AXApplication (com.apple.dock)
 //     └── AXGroup / AXWindow ... with AXIdentifier = "mc"
-//           └── AXGroup   AXIdentifier = "mc.display_<UUID>"
+//           └── AXGroup   AXIdentifier = "mc.display", AXDisplayID = <CGDirectDisplayID>
 //                 └── AXGroup   AXIdentifier = "mc.spaces"
 //                       ├── AXGroup   AXIdentifier = "mc.spaces.list"
 //                       └── AXButton  AXIdentifier = "mc.spaces.add"
 //
-// We match on the identifier "mc.spaces.add" first (fast + correct on
-// modern macOS) and only fall back to a fuzzier scan if that fails.
+// With several displays there is one "mc.display" group, and so one "+"
+// button, per display. We first narrow the search to the group of the
+// display holding the focused window, then match the identifier
+// "mc.spaces.add" (fast + correct on modern macOS), and only fall back
+// to a fuzzier scan if that fails.
 
 private enum MissionControlSpaceCreator {
-    /// Attempts to create a new Space. Calls `completion` on the main
-    /// queue with `true` on success (the Space appears in
-    /// SLSCopyManagedDisplaySpaces after we finish), `false` otherwise.
-    static func createNewSpace(completion: @escaping (Bool) -> Void) {
-        let before = spaceCountForMainDisplay()
+    /// Attempts to create a new Space on the display identified by
+    /// `displayUUID` (a managed-display identifier from SkyLight; nil
+    /// means "whichever display Mission Control lists first"). Calls
+    /// `completion` on the main queue with `true` on success (that
+    /// display gains a Space in SLSCopyManagedDisplaySpaces after we
+    /// finish), `false` otherwise.
+    static func createNewSpace(
+        onDisplay displayUUID: String?,
+        completion: @escaping (Bool) -> Void
+    ) {
+        let before = spaceCount(forDisplay: displayUUID)
         log.notice("MissionControl: begin, current space count=\(before ?? -1)")
 
         openMissionControl()
@@ -842,7 +852,7 @@ private enum MissionControlSpaceCreator {
         // Poll for the AX tree to populate. On a fast Mac the "+" button
         // appears within ~200 ms; on a slower one it can take ~800 ms.
         // Polling avoids hard-coded delays that fail on either extreme.
-        waitForAddSpaceButton(deadline: .now() + 1.5) { button in
+        waitForAddSpaceButton(displayUUID: displayUUID, deadline: .now() + 1.5) { button in
             guard let button else {
                 log.error("MissionControl: could not find the '+' button (timed out); dumping Dock AX tree")
                 dumpDockAXTree()
@@ -868,7 +878,7 @@ private enum MissionControlSpaceCreator {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 dismissMissionControl()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    let after = spaceCountForMainDisplay()
+                    let after = spaceCount(forDisplay: displayUUID)
                     let ok = (before ?? 0) < (after ?? 0)
                     log.notice("MissionControl: space count \(before ?? -1) -> \(after ?? -1), ok=\(ok)")
                     completion(ok)
@@ -926,10 +936,11 @@ private enum MissionControlSpaceCreator {
     /// AX tree, calling `completion` on the main queue when found or when
     /// the deadline passes.
     private static func waitForAddSpaceButton(
+        displayUUID: String?,
         deadline: DispatchTime,
         completion: @escaping (AXUIElement?) -> Void
     ) {
-        if let btn = findAddSpaceButton() {
+        if let btn = findAddSpaceButton(displayUUID: displayUUID) {
             completion(btn)
             return
         }
@@ -938,21 +949,39 @@ private enum MissionControlSpaceCreator {
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            waitForAddSpaceButton(deadline: deadline, completion: completion)
+            waitForAddSpaceButton(displayUUID: displayUUID, deadline: deadline, completion: completion)
         }
     }
 
     /// Locates the Mission Control "add Space" button in the Dock's AX
-    /// tree. Preferred path: match `AXIdentifier == "mc.spaces.add"`
-    /// (present on every macOS version we support, as used by hs.spaces).
-    /// Fallback path: a fuzzy search over identifier / description /
-    /// help / title strings, for robustness against a future rename.
-    private static func findAddSpaceButton() -> AXUIElement? {
+    /// tree, inside the group of the display `displayUUID` when it can
+    /// be resolved. Preferred path: match
+    /// `AXIdentifier == "mc.spaces.add"` (present on every macOS version
+    /// we support, as used by hs.spaces). Fallback path: a fuzzy search
+    /// over identifier / description / help / title strings, for
+    /// robustness against a future rename.
+    private static func findAddSpaceButton(displayUUID: String?) -> AXUIElement? {
         guard let pid = dockPID() else {
             log.error("MissionControl: Dock process not running")
             return nil
         }
-        let app = AXUIElementCreateApplication(pid)
+        let dock = AXUIElementCreateApplication(pid)
+
+        // Search root: the target display's Mission Control group. If it
+        // can't be found, searching the whole Dock would hit the main
+        // display's "+" first, so only do that when there is a single
+        // screen and "first" is necessarily the right one. "Main" means
+        // "Displays have separate Spaces" is off: every screen shares
+        // one Space list, so any "+" adds to it.
+        let app: AXUIElement
+        if let displayUUID, displayUUID != "Main",
+           let group = findDisplayGroup(in: dock, displayUUID: displayUUID) {
+            app = group
+        } else if NSScreen.screens.count <= 1 || displayUUID == nil || displayUUID == "Main" {
+            app = dock
+        } else {
+            return nil
+        }
 
         // Fast path: exact identifier match.
         if let hit = findElement(in: app, depth: 0, maxDepth: 10, matching: { el in
@@ -980,6 +1009,44 @@ private enum MissionControlSpaceCreator {
         }
 
         return nil
+    }
+
+    /// Finds the Mission Control group for the display whose
+    /// managed-display identifier is `displayUUID`. Matches the group's
+    /// `AXDisplayID` against the CGDirectDisplayID of that UUID, or an
+    /// identifier carrying the UUID ("mc.display_<UUID>") on releases
+    /// that encode it there.
+    private static func findDisplayGroup(in dock: AXUIElement, displayUUID: String) -> AXUIElement? {
+        let displayID = cgDisplayID(forUUID: displayUUID)
+        let uuid = displayUUID.lowercased()
+        return findElement(in: dock, depth: 0, maxDepth: 6, matching: { el in
+            guard let id = axString(el, kAXIdentifierAttribute as String),
+                  id.hasPrefix("mc.display") else { return false }
+            if let displayID, axDisplayID(el) == displayID { return true }
+            return id.lowercased().contains(uuid)
+        })
+    }
+
+    /// CGDirectDisplayID of the active display with the given UUID.
+    private static func cgDisplayID(forUUID displayUUID: String) -> CGDirectDisplayID? {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return nil }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return nil }
+        return ids.prefix(Int(count)).first { id in
+            guard let cfUUID = CGDisplayCreateUUIDFromDisplayID(id)?.takeRetainedValue() else {
+                return false
+            }
+            let str = CFUUIDCreateString(nil, cfUUID) as String
+            return str.caseInsensitiveCompare(displayUUID) == .orderedSame
+        }
+    }
+
+    private static func axDisplayID(_ element: AXUIElement) -> CGDirectDisplayID? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, "AXDisplayID" as CFString, &ref) == .success,
+              let number = ref as? NSNumber else { return nil }
+        return number.uint32Value
     }
 
     /// Depth-limited DFS over the AX tree, invoking `matches` on each
@@ -1065,7 +1132,8 @@ private enum MissionControlSpaceCreator {
         let publicID = id
         let publicDesc = desc
         let publicTitle = title
-        log.error("\(indent, privacy: .public)[\(publicRole, privacy: .public)] id=\(publicID, privacy: .public) desc=\(publicDesc, privacy: .public) title=\(publicTitle, privacy: .public)")
+        let displayID = axDisplayID(element).map { " displayID=\($0)" } ?? ""
+        log.error("\(indent, privacy: .public)[\(publicRole, privacy: .public)] id=\(publicID, privacy: .public)\(displayID, privacy: .public) desc=\(publicDesc, privacy: .public) title=\(publicTitle, privacy: .public)")
 
         var childrenRef: CFTypeRef?
         if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef) == .success,
@@ -1078,7 +1146,9 @@ private enum MissionControlSpaceCreator {
 
     // MARK: Space count probe (uses SkyLight, same as SpaceMover engine)
 
-    private static func spaceCountForMainDisplay() -> Int? {
+    /// Number of Spaces on the display `displayUUID`, or across all
+    /// displays when it is nil or not listed.
+    private static func spaceCount(forDisplay displayUUID: String?) -> Int? {
         guard let cgsMainConnectionID = SkyLight.cgsMainConnectionID,
               let slsCopyManagedDisplaySpaces = SkyLight.slsCopyManagedDisplaySpaces else {
             return nil
@@ -1086,8 +1156,10 @@ private enum MissionControlSpaceCreator {
         let cid = cgsMainConnectionID()
         guard let displays = slsCopyManagedDisplaySpaces(cid)?
             .takeRetainedValue() as? [[String: Any]] else { return nil }
-        // Sum across displays: we only care that *some* display gained a
-        // Space. Users almost always trigger this on the main display.
+        if let displayUUID,
+           let display = displays.first(where: { ($0["Display Identifier"] as? String) == displayUUID }) {
+            return (display["Spaces"] as? [[String: Any]])?.count
+        }
         var total = 0
         for d in displays {
             if let spaces = d["Spaces"] as? [[String: Any]] {
@@ -1906,6 +1978,14 @@ final class SpaceMover {
     func currentSpaceIsLast() -> Bool {
         guard let (index, total) = currentSpaceInfo() else { return false }
         return index == total - 1
+    }
+
+    /// Managed-display identifier (a display UUID, or "Main" when
+    /// "Displays have separate Spaces" is off) of the display holding
+    /// the focused window. Used to add a Space on that display rather
+    /// than on the main one.
+    func focusedDisplayUUID() -> String? {
+        context()?.displayUUID as String?
     }
 
     // MARK: Internals

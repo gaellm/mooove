@@ -231,7 +231,8 @@ When the user has **Create New Space if Next Doesn't Exist** enabled
 (the default) and `move(.next)` returns `.noop` because the current
 Space is already the last one on the display,
 `MooOveApp.performMove(_:)` calls
-`MissionControlSpaceCreator.createNewSpace { … }` and, on success,
+`MissionControlSpaceCreator.createNewSpace(onDisplay:) { … }` with the
+managed-display UUID of the focused window's display and, on success,
 retries the move.
 
 macOS has no public API to add a Space, and `SLSSpaceCreate` alone
@@ -246,7 +247,7 @@ macOS 13, 14, 15, and 26:
 ```
 AXApplication (com.apple.dock)
   └── ... AXIdentifier = "mc"
-        └── AXGroup    AXIdentifier = "mc.display_<UUID>"
+        └── AXGroup    AXIdentifier = "mc.display", AXDisplayID = <CGDirectDisplayID>
               └── AXGroup   AXIdentifier = "mc.spaces"
                     ├── AXGroup   AXIdentifier = "mc.spaces.list"
                     └── AXButton  AXIdentifier = "mc.spaces.add"     ← target
@@ -254,8 +255,13 @@ AXApplication (com.apple.dock)
 
 The full recipe in `MissionControlSpaceCreator`:
 
-1. **Snapshot** the Space count with `SLSCopyManagedDisplaySpaces` so
-   we have a `before` value to compare against later.
+There is one `mc.display` group, and so one "+" button, per display.
+Searching the whole tree finds the main display's button first, which
+adds the Space to the wrong screen when the window is on another one.
+
+1. **Snapshot** the target display's Space count with
+   `SLSCopyManagedDisplaySpaces` so we have a `before` value to compare
+   against later.
 2. **Open Mission Control** — call the private
    `CoreDockSendNotification("com.apple.expose.awake", 0)` (the same
    notification `Dock.app` sends when the user presses F3). If the
@@ -263,7 +269,13 @@ The full recipe in `MissionControlSpaceCreator`:
    `NSWorkspace.openApplication(at: /System/Applications/Mission
    Control.app)`.
 3. **Poll** the Dock's AX tree every 100 ms (up to 1.5 s total) for an
-   element with `AXIdentifier == "mc.spaces.add"`. Polling instead of
+   element with `AXIdentifier == "mc.spaces.add"`, searching only under
+   the target display's `mc.display*` group. That group is matched by
+   `AXDisplayID` (the display UUID resolved to a `CGDirectDisplayID`
+   via `CGDisplayCreateUUIDFromDisplayID`) or by an identifier that
+   contains the UUID. If the group can't be found the whole Dock is
+   searched only when there is a single screen, or when the display is
+   `"Main"` (*Displays have separate Spaces* off: one shared Space list). Polling instead of
    a fixed sleep matters: fast Macs surface the button in ~200 ms,
    slower ones can take ~800 ms. Fallbacks (in order):
    1. Exact identifier match `mc.spaces.add`.
@@ -276,8 +288,8 @@ The full recipe in `MissionControlSpaceCreator`:
    break us as long as the button is exposed to AX.
 5. **Wait ~600 ms** for the new-Space animation, then dismiss Mission
    Control (re-send the awake toggle and post an Escape key), wait
-   one more animation tick, and re-count Spaces. Success = the total
-   grew.
+   one more animation tick, and re-count Spaces. Success = the
+   target display's count grew.
 6. On success the app runs `move(.next)` again — which now finds a
    real next Space — and shows the usual success/failure feedback.
 
